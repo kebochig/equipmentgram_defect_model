@@ -214,7 +214,7 @@ async def startup_event():
     """Initialize Gemini model on startup"""
     global gemini_model
     try:
-        gemini_model = genai.GenerativeModel("gemini-3-flash")
+        gemini_model = genai.GenerativeModel("gemini-3-flash-preview")
         print("✓ Gemini model initialized successfully")
     except Exception as e:
         print(f"✗ Failed to initialize Gemini model: {str(e)}")
@@ -414,7 +414,7 @@ async def health_check():
         return {
             "status": "healthy",
             "gemini_api": "connected",
-            "gemini_model": "gemini-3-flash",
+            "gemini_model": "gemini-3-flash-preview",
             "equipment_types": len(EQUIPMENT_HIERARCHY),
             "total_sections": len(COMPACT_EXCAVATOR_SECTIONS),
             "timestamp": datetime.now().isoformat()
