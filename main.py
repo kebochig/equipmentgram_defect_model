@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import List, Optional
 
+
 import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -75,10 +76,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory storage (replace with a database in production)
-inspections_db: list = []
-db_lock = asyncio.Lock()
-
 gemini_model = None
 
 # ---------------------------------------------------------------------------
@@ -113,8 +110,6 @@ async def root():
         "endpoints": {
             "POST /inspect": "Analyze equipment component for defects",
             "POST /inspect/batch": "Inspect multiple components in a section",
-            "GET /inspections": "Get all inspection history",
-            "GET /inspections/{id}": "Get specific inspection",
             "GET /equipment-info": "Get complete equipment hierarchy",
             "GET /manufacturers": "Get list of manufacturers",
             "GET /models": "Get models by manufacturer",
@@ -295,7 +290,7 @@ async def batch_inspect_equipment(
         section, len(scores), len(results), section_score, section_risk_level,
     )
 
-    batch_id = f"BATCH-{datetime.now().strftime('%Y%m%d%H%M%S')}-{len(inspections_db) + 1}"
+    batch_id = f"BATCH-{datetime.now().strftime('%Y%m%d%H%M%S')}"
     batch_result = BatchInspectionResult(
         batch_id=batch_id,
         equipment_type=equipment_type,
@@ -309,9 +304,6 @@ async def batch_inspect_equipment(
         section_score=section_score,
         section_risk_level=section_risk_level,
     )
-
-    async with db_lock:
-        inspections_db.append(batch_result.model_dump())
 
     return batch_result
 
@@ -370,7 +362,7 @@ async def inspect_equipment(
             defect_result.severity, defect_result.risk_level,
         )
 
-        inspection_id = f"INS-{datetime.now().strftime('%Y%m%d%H%M%S')}-{len(inspections_db) + 1}"
+        inspection_id = f"INS-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
         inspection_result = InspectionResult(
@@ -391,10 +383,6 @@ async def inspect_equipment(
             image_base64=image_base64[:100] + "..." if len(image_base64) > 100 else image_base64,
         )
 
-        async with db_lock:
-            inspections_db.append(inspection_result.model_dump())
-        logger.info("Inspection stored | id=%s", inspection_id)
-
         return inspection_result
 
     except HTTPException:
@@ -404,56 +392,6 @@ async def inspect_equipment(
     except Exception as e:
         logger.exception("Unexpected error during inspection: %s", e)
         raise HTTPException(status_code=500, detail=f"Error processing inspection: {e}")
-
-
-@app.get("/inspections")
-async def get_inspections(
-    limit: int = 50,
-    equipment_type: Optional[str] = None,
-    manufacturer: Optional[str] = None,
-    section: Optional[str] = None,
-    defect_only: bool = False,
-):
-    filtered = inspections_db.copy()
-    if equipment_type:
-        filtered = [i for i in filtered if i.get("equipment_type") == equipment_type]
-    if manufacturer:
-        filtered = [i for i in filtered if i.get("manufacturer") == manufacturer]
-    if section:
-        filtered = [i for i in filtered if i.get("section") == section]
-    if defect_only:
-        filtered = [i for i in filtered if i.get("defect_present")]
-    return {
-        "inspections": filtered[-limit:],
-        "total": len(filtered),
-        "filters_applied": {
-            "equipment_type": equipment_type,
-            "manufacturer": manufacturer,
-            "section": section,
-            "defect_only": defect_only,
-        },
-    }
-
-
-@app.get("/inspections/{inspection_id}")
-async def get_inspection(inspection_id: str):
-    for inspection in inspections_db:
-        if inspection.get("id") == inspection_id or inspection.get("batch_id") == inspection_id:
-            return inspection
-    raise HTTPException(status_code=404, detail=f"Inspection {inspection_id} not found")
-
-
-@app.delete("/inspections/{inspection_id}")
-async def delete_inspection(inspection_id: str):
-    for i, inspection in enumerate(inspections_db):
-        if inspection.get("id") == inspection_id or inspection.get("batch_id") == inspection_id:
-            async with db_lock:
-                deleted = inspections_db.pop(i)
-            logger.info("Inspection deleted | id=%s", inspection_id)
-            return {"message": "Inspection deleted successfully", "deleted_inspection": deleted}
-
-    logger.warning("Delete failed — inspection not found | id=%s", inspection_id)
-    raise HTTPException(status_code=404, detail=f"Inspection {inspection_id} not found")
 
 
 if __name__ == "__main__":
