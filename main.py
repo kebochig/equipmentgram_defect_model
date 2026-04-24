@@ -356,16 +356,23 @@ async def inspect_equipment(
         logger.info("Gemini response received | duration=%.2fs", time.monotonic() - t0)
 
         defect_result = parse_gemini_response(response.text)
-        logger.info(
-            "Inspection result | defect_present=%s condition=%s severity=%d risk_level=%s",
-            defect_result.defect_present, defect_result.condition,
-            defect_result.severity, defect_result.risk_level,
-        )
+
+        if not defect_result.image_verified:
+            logger.warning(
+                "Image verification failed | component=%s reason=%s",
+                component, defect_result.verification_reason,
+            )
+        else:
+            logger.info(
+                "Inspection result | defect_present=%s condition=%s severity=%d risk_level=%s",
+                defect_result.defect_present, defect_result.condition,
+                defect_result.severity, defect_result.risk_level,
+            )
 
         inspection_id = f"INS-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
-        inspection_result = InspectionResult(
+        return InspectionResult(
             id=inspection_id,
             equipment_type=equipment_type,
             manufacturer=manufacturer,
@@ -373,17 +380,17 @@ async def inspect_equipment(
             section=section,
             component=component,
             timestamp=datetime.now().isoformat(),
-            defect_present=defect_result.defect_present,
-            defect_type=defect_result.defect_type,
-            severity=defect_result.severity,
-            condition=defect_result.condition,
-            risk_level=defect_result.risk_level,
-            observations=defect_result.observations,
-            recommended_action=defect_result.recommended_action,
+            image_verified=defect_result.image_verified,
+            verification_reason=defect_result.verification_reason,
+            defect_present=defect_result.defect_present if defect_result.image_verified else None,
+            defect_type=defect_result.defect_type if defect_result.image_verified else None,
+            severity=defect_result.severity if defect_result.image_verified else None,
+            condition=defect_result.condition if defect_result.image_verified else None,
+            risk_level=defect_result.risk_level if defect_result.image_verified else None,
+            observations=defect_result.observations if defect_result.image_verified else None,
+            recommended_action=defect_result.recommended_action if defect_result.image_verified else None,
             image_base64=image_base64[:100] + "..." if len(image_base64) > 100 else image_base64,
         )
-
-        return inspection_result
 
     except HTTPException:
         raise

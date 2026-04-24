@@ -3,6 +3,8 @@ from typing import Optional, List, Dict
 
 
 class DefectResponse(BaseModel):
+    image_verified: bool = True
+    verification_reason: Optional[str] = None
     defect_present: bool
     defect_type: Optional[str] = None
     severity: int = Field(ge=0, le=100)
@@ -20,13 +22,15 @@ class InspectionResult(BaseModel):
     section: str
     component: str
     timestamp: str
-    defect_present: bool
-    defect_type: Optional[str]
-    severity: int
-    condition: str
-    risk_level: str
-    observations: str
-    recommended_action: str
+    image_verified: bool
+    verification_reason: Optional[str] = None
+    defect_present: Optional[bool] = None
+    defect_type: Optional[str] = None
+    severity: Optional[int] = None
+    condition: Optional[str] = None
+    risk_level: Optional[str] = None
+    observations: Optional[str] = None
+    recommended_action: Optional[str] = None
     image_base64: Optional[str] = None
 
 

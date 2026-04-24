@@ -69,6 +69,22 @@ The image shows the "{component}" component, which is part of the "{section}" se
 INSPECTION TASK:
 Perform a detailed visual inspection of this specific component following industry standards for heavy equipment evaluation.
 
+0. IMAGE VERIFICATION:
+   Before inspecting, determine if this image plausibly shows the "{component}" from
+   the "{section}" section of a {manufacturer} {model} {equipment_type}.
+
+   Set image_verified: false if the image clearly shows something unrelated — a person,
+   landscape, food, interior room, or machinery with no visible resemblance to the
+   stated component.
+
+   Set image_verified: true if the image plausibly shows the component or anything
+   consistent with heavy equipment of this type.
+
+   If image_verified is false:
+   - Set verification_reason to one sentence explaining why
+   - Set all other fields to null / false / 0
+   - Do not attempt the inspection
+
 1. DEFECT IDENTIFICATION:
    Analyze the image for any of the following defects:
    - Cracks, fractures, or structural damage
@@ -99,6 +115,8 @@ Perform a detailed visual inspection of this specific component following indust
 OUTPUT FORMAT:
 Respond ONLY with valid JSON in this exact format (no markdown, no extra text):
 {{
+  "image_verified": true or false,
+  "verification_reason": "one sentence reason if not verified, else null",
   "defect_present": true or false,
   "defect_type": "specific defect description or null",
   "severity": 0-100,
@@ -108,8 +126,21 @@ Respond ONLY with valid JSON in this exact format (no markdown, no extra text):
 
 REFERENCE EXAMPLES:
 
+Example 0 - Image Mismatch:
+{{
+  "image_verified": false,
+  "verification_reason": "The image shows a grassy field, not a boom pin or any excavator component.",
+  "defect_present": false,
+  "defect_type": null,
+  "severity": 0,
+  "observations": null,
+  "recommended_action": null
+}}
+
 Example 1 - Healthy Component (Hydraulic Cylinder):
 {{
+  "image_verified": true,
+  "verification_reason": null,
   "defect_present": false,
   "defect_type": null,
   "severity": 5,
@@ -119,6 +150,8 @@ Example 1 - Healthy Component (Hydraulic Cylinder):
 
 Example 2 - Moderate Defect (Track Belt):
 {{
+  "image_verified": true,
+  "verification_reason": null,
   "defect_present": true,
   "defect_type": "Excessive wear on track grouser with rust formation",
   "severity": 55,
@@ -128,6 +161,8 @@ Example 2 - Moderate Defect (Track Belt):
 
 Example 3 - Critical Defect (Boom Pin):
 {{
+  "image_verified": true,
+  "verification_reason": null,
   "defect_present": true,
   "defect_type": "Severe crack in boom pin with material displacement",
   "severity": 92,
@@ -154,16 +189,25 @@ def parse_gemini_response(response_text: str) -> DefectResponse:
         response_text = response_text.strip()
 
         data = json.loads(response_text)
-        severity = min(max(data.get("severity", 0), 0), 100)
-        condition, risk_level = derive_condition_and_risk(severity)
+        image_verified = data.get("image_verified", True)
+        verification_reason = data.get("verification_reason")
+
+        if image_verified:
+            severity = min(max(data.get("severity", 0), 0), 100)
+            condition, risk_level = derive_condition_and_risk(severity)
+        else:
+            severity, condition, risk_level = 0, "Good", "Low"
+
         return DefectResponse(
+            image_verified=image_verified,
+            verification_reason=verification_reason,
             defect_present=data.get("defect_present", False),
             defect_type=data.get("defect_type"),
             severity=severity,
             condition=condition,
             risk_level=risk_level,
-            observations=data.get("observations", "No observations provided"),
-            recommended_action=data.get("recommended_action", "No action specified"),
+            observations=data.get("observations") or "No observations provided",
+            recommended_action=data.get("recommended_action") or "No action specified",
         )
     except json.JSONDecodeError as e:
         logger.error("Failed to parse Gemini response as JSON: %s | response=%s", e, response_text)
@@ -189,6 +233,15 @@ async def inspect_one(
         response = await gemini_model.generate_content_async([prompt, pil_image])
         logger.info("Gemini response | component=%s duration=%.2fs", component, time.monotonic() - t0)
         defect = parse_gemini_response(response.text)
+
+        if not defect.image_verified:
+            logger.warning("Image mismatch | component=%s reason=%s", component, defect.verification_reason)
+            return ComponentBatchResult(
+                component=component,
+                success=False,
+                error=defect.verification_reason or "Image does not match the stated component.",
+            )
+
         return ComponentBatchResult(
             component=component,
             success=True,
