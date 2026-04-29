@@ -18,8 +18,8 @@ from datetime import datetime
 from typing import List, Optional
 
 
-import google.generativeai as genai
 from dotenv import load_dotenv
+from langchain_google_genai import ChatGoogleGenerativeAI
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -27,7 +27,7 @@ from core import (
     create_inspection_prompt,
     inspect_one,
     parse_gemini_response,
-    _open_and_convert,
+    _build_message,
     section_risk_from_score,
     severity_to_component_score,
 )
@@ -60,8 +60,6 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY not found in environment variables")
 
-genai.configure(api_key=GEMINI_API_KEY)
-
 app = FastAPI(
     title="Heavy Equipment Defect Detection API",
     description="POC for detecting defects in heavy equipment using Gemini Pro Vision",
@@ -90,8 +88,14 @@ async def startup_event():
     loop.set_default_executor(ThreadPoolExecutor(max_workers=max_workers))
     logger.info("Thread pool initialized with max_workers=%d", max_workers)
     try:
-        gemini_model = genai.GenerativeModel("gemini-3-flash-preview")
-        logger.info("Gemini model initialized successfully")
+        gemini_model = ChatGoogleGenerativeAI(
+            model="gemini-3-flash-preview",
+            google_api_key=GEMINI_API_KEY,
+        ).with_retry(
+            stop_after_attempt=3,
+            wait_exponential_jitter=True,
+        )
+        logger.info("Gemini model initialized successfully via LangChain")
     except Exception as e:
         logger.critical("Failed to initialize Gemini model: %s", e)
         raise
@@ -341,10 +345,8 @@ async def inspect_equipment(
             logger.warning("Image too large: %.1fKB", image_size_kb)
             raise HTTPException(status_code=400, detail="Image size must be less than 10MB")
 
-        pil_image = await asyncio.to_thread(_open_and_convert, image_bytes)
-        logger.info("Image processed | mode=%s size=%s", pil_image.mode, pil_image.size)
-
         prompt = create_inspection_prompt(equipment_type, manufacturer, model, section, component)
+        message = _build_message(prompt, image_bytes)
 
         if gemini_model is None:
             logger.error("Gemini model is not initialized")
@@ -352,10 +354,10 @@ async def inspect_equipment(
 
         logger.info("Sending request to Gemini | component=%s", component)
         t0 = time.monotonic()
-        response = await gemini_model.generate_content_async([prompt, pil_image])
+        response = await gemini_model.ainvoke([message])
         logger.info("Gemini response received | duration=%.2fs", time.monotonic() - t0)
 
-        defect_result = parse_gemini_response(response.text)
+        defect_result = parse_gemini_response(response.content)
 
         if not defect_result.image_verified:
             logger.warning(

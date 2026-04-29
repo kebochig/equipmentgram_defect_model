@@ -1,10 +1,10 @@
 import asyncio
-import io
+import base64
 import json
 import logging
 import time
 
-from PIL import Image
+from langchain_core.messages import HumanMessage
 
 from models import ComponentBatchResult, DefectResponse
 
@@ -12,12 +12,19 @@ logger = logging.getLogger("defect_model")
 
 
 # ---------------------------------------------------------------------------
-# Image processing
+# Image helpers
 # ---------------------------------------------------------------------------
 
-def _open_and_convert(data: bytes) -> Image.Image:
-    img = Image.open(io.BytesIO(data))
-    return img.convert("RGB") if img.mode != "RGB" else img
+def _bytes_to_base64(data: bytes) -> str:
+    return base64.b64encode(data).decode("utf-8")
+
+
+def _build_message(prompt: str, image_bytes: bytes) -> HumanMessage:
+    """Build a multimodal LangChain HumanMessage with text prompt and image."""
+    return HumanMessage(content=[
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_bytes_to_base64(image_bytes)}"}},
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -227,12 +234,12 @@ async def inspect_one(
     section: str, component: str, image_bytes: bytes,
 ) -> ComponentBatchResult:
     try:
-        pil_image = await asyncio.to_thread(_open_and_convert, image_bytes)
         prompt = create_inspection_prompt(equipment_type, manufacturer, model, section, component)
+        message = _build_message(prompt, image_bytes)
         t0 = time.monotonic()
-        response = await gemini_model.generate_content_async([prompt, pil_image])
+        response = await gemini_model.ainvoke([message])
         logger.info("Gemini response | component=%s duration=%.2fs", component, time.monotonic() - t0)
-        defect = parse_gemini_response(response.text)
+        defect = parse_gemini_response(response.content)
 
         if not defect.image_verified:
             logger.warning("Image mismatch | component=%s reason=%s", component, defect.verification_reason)
