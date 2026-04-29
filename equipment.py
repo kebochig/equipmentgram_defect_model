@@ -123,6 +123,13 @@ def validate_hierarchy(
     equipment_type: str, manufacturer: str, model: str,
     section: str, component: str
 ) -> tuple[bool, str]:
+    from urllib.parse import unquote
+    equipment_type = unquote(equipment_type).strip()
+    manufacturer = unquote(manufacturer).strip()
+    model = unquote(model).strip()
+    section = unquote(section).strip()
+    component = unquote(component).strip()
+
     if equipment_type not in EQUIPMENT_HIERARCHY:
         return False, f"Invalid equipment type. Must be one of: {list(EQUIPMENT_HIERARCHY.keys())}"
 

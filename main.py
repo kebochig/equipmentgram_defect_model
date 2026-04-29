@@ -389,7 +389,7 @@ async def inspect_equipment(
             risk_level=defect_result.risk_level if defect_result.image_verified else None,
             observations=defect_result.observations if defect_result.image_verified else None,
             recommended_action=defect_result.recommended_action if defect_result.image_verified else None,
-            image_base64=image_base64[:100] + "..." if len(image_base64) > 100 else image_base64,
+            image_base64=image_base64,
         )
 
     except HTTPException:
