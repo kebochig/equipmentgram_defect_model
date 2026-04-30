@@ -6,6 +6,7 @@ Usage:
 1. Create .env file with: GEMINI_API_KEY=your_key_here
 2. Run: uvicorn main:app --reload
 3. Access API docs at: http://localhost:8000/docs
+
 """
 
 import asyncio
