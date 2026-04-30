@@ -325,7 +325,7 @@ async def inspect_equipment(
 
     is_valid, error_msg = validate_hierarchy(equipment_type, manufacturer, model, section, component)
     if not is_valid:
-        logger.warning("Hierarchy validation warning (proceeding): %s", error_msg)
+        logger.info("Hierarchy validation warning (proceeding): %s", error_msg)
 
     if not image.content_type.startswith("image/"):
         logger.warning("Invalid file type uploaded: %s", image.content_type)
