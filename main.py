@@ -265,8 +265,7 @@ async def batch_inspect_equipment(
     for component in component_names_list:
         is_valid, error_msg = validate_hierarchy(equipment_type, manufacturer, model, section, component)
         if not is_valid:
-            logger.warning("Batch hierarchy validation failed: %s", error_msg)
-            raise HTTPException(status_code=400, detail=error_msg)
+            logger.warning("Batch hierarchy validation warning (proceeding): %s", error_msg)
 
     if gemini_model is None:
         raise HTTPException(status_code=503, detail="Gemini model not initialized.")
@@ -329,8 +328,7 @@ async def inspect_equipment(
 
     is_valid, error_msg = validate_hierarchy(equipment_type, manufacturer, model, section, component)
     if not is_valid:
-        logger.warning("Hierarchy validation failed: %s", error_msg)
-        raise HTTPException(status_code=400, detail=error_msg)
+        logger.warning("Hierarchy validation warning (proceeding): %s", error_msg)
 
     if not image.content_type.startswith("image/"):
         logger.warning("Invalid file type uploaded: %s", image.content_type)
