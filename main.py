@@ -91,7 +91,7 @@ async def startup_event():
     loop.set_default_executor(ThreadPoolExecutor(max_workers=max_workers))
     logger.info("Thread pool initialized with max_workers=%d", max_workers)
     try:
-        gemini_model = genai.GenerativeModel("gemini-3-flash-preview")
+        gemini_model = genai.GenerativeModel("gemini-3-flash-preview") #gemini-flash-latest  gemini-2.5-pro  gemini-2.5-flash
         logger.info("Gemini model initialized successfully")
     except Exception as e:
         logger.critical("Failed to initialize Gemini model: %s", e)
