@@ -363,13 +363,13 @@ async def inspect_equipment(
             )
         else:
             logger.info(
-                "Inspection result | defect_present=%s condition=%s severity=%d risk_level=%s",
+                "Inspection result | defect_present=%s condition=%s severity=%d risk_level=%s confidence=%d",
                 defect_result.defect_present, defect_result.condition,
-                defect_result.severity, defect_result.risk_level,
+                defect_result.severity, defect_result.risk_level, defect_result.confidence,
             )
 
         inspection_id = f"INS-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")[:20] + "..."
 
         return InspectionResult(
             id=inspection_id,
@@ -384,6 +384,7 @@ async def inspect_equipment(
             defect_present=defect_result.defect_present if defect_result.image_verified else None,
             defect_type=defect_result.defect_type if defect_result.image_verified else None,
             severity=defect_result.severity if defect_result.image_verified else None,
+            confidence=defect_result.confidence if defect_result.image_verified else None,
             condition=defect_result.condition if defect_result.image_verified else None,
             risk_level=defect_result.risk_level if defect_result.image_verified else None,
             observations=defect_result.observations if defect_result.image_verified else None,

@@ -112,6 +112,13 @@ Perform a detailed visual inspection of this specific component following indust
 4. RECOMMENDED ACTION:
    One sentence stating the single most important action to take.
 
+5. CONFIDENCE SCORING (0-100):
+   Rate your confidence in the overall assessment based on image quality and component visibility:
+   - 90–100: High — clear image, unambiguous result
+   - 70–89: Moderate — some uncertainty (lighting, angle, partial view)
+   - 50–69: Low — significant ambiguity; recommend re-inspection
+   - 0–49: Very low — image quality or component visibility too poor to be certain
+
 OUTPUT FORMAT:
 Respond ONLY with valid JSON in this exact format (no markdown, no extra text):
 {{
@@ -120,6 +127,7 @@ Respond ONLY with valid JSON in this exact format (no markdown, no extra text):
   "defect_present": true or false,
   "defect_type": "specific defect description or null",
   "severity": 0-100,
+  "confidence": 0-100,
   "observations": "one sentence of key visual evidence",
   "recommended_action": "one sentence stating the most important action"
 }}
@@ -133,6 +141,7 @@ Example 0 - Image Mismatch:
   "defect_present": false,
   "defect_type": null,
   "severity": 0,
+  "confidence": 0,
   "observations": null,
   "recommended_action": null
 }}
@@ -144,6 +153,7 @@ Example 1 - Healthy Component (Hydraulic Cylinder):
   "defect_present": false,
   "defect_type": null,
   "severity": 5,
+  "confidence": 92,
   "observations": "Cylinder rod surface is smooth with no scoring or leakage and only normal operational wear visible.",
   "recommended_action": "Continue normal operation and monitor at next scheduled inspection."
 }}
@@ -155,6 +165,7 @@ Example 2 - Moderate Defect (Track Belt):
   "defect_present": true,
   "defect_type": "Excessive wear on track grouser with rust formation",
   "severity": 55,
+  "confidence": 74,
   "observations": "Track grouser height reduced to ~60% of spec with rust forming on three consecutive worn grousers.",
   "recommended_action": "Schedule track replacement within 2 weeks and avoid high-stress applications until then."
 }}
@@ -166,6 +177,7 @@ Example 3 - Critical Defect (Boom Pin):
   "defect_present": true,
   "defect_type": "Severe crack in boom pin with material displacement",
   "severity": 92,
+  "confidence": 96,
   "observations": "An 8cm crack with rust staining and visible metal displacement indicates imminent failure of this load-bearing pin.",
   "recommended_action": "Remove equipment from service immediately and schedule emergency pin replacement with a certified technician."
 }}
@@ -195,8 +207,10 @@ def parse_gemini_response(response_text: str) -> DefectResponse:
         if image_verified:
             severity = min(max(data.get("severity", 0), 0), 100)
             condition, risk_level = derive_condition_and_risk(severity)
+            confidence = min(max(data.get("confidence") or 0, 0), 100)
         else:
             severity, condition, risk_level = 0, "Good", "Low"
+            confidence = 0
 
         return DefectResponse(
             image_verified=image_verified,
@@ -204,6 +218,7 @@ def parse_gemini_response(response_text: str) -> DefectResponse:
             defect_present=data.get("defect_present", False),
             defect_type=data.get("defect_type"),
             severity=severity,
+            confidence=confidence,
             condition=condition,
             risk_level=risk_level,
             observations=data.get("observations") or "No observations provided",
@@ -248,6 +263,7 @@ async def inspect_one(
             defect_present=defect.defect_present,
             defect_type=defect.defect_type,
             severity=defect.severity,
+            confidence=defect.confidence,
             condition=defect.condition,
             component_score=severity_to_component_score(defect.severity),
             risk_level=defect.risk_level,

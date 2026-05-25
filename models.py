@@ -8,6 +8,7 @@ class DefectResponse(BaseModel):
     defect_present: bool
     defect_type: Optional[str] = None
     severity: int = Field(ge=0, le=100)
+    confidence: Optional[int] = Field(default=None, ge=0, le=100)
     condition: str
     risk_level: str
     observations: str
@@ -27,6 +28,7 @@ class InspectionResult(BaseModel):
     defect_present: Optional[bool] = None
     defect_type: Optional[str] = None
     severity: Optional[int] = None
+    confidence: Optional[int] = None
     condition: Optional[str] = None
     risk_level: Optional[str] = None
     observations: Optional[str] = None
@@ -41,6 +43,7 @@ class ComponentBatchResult(BaseModel):
     defect_present: Optional[bool] = None
     defect_type: Optional[str] = None
     severity: Optional[int] = None
+    confidence: Optional[int] = None
     condition: Optional[str] = None
     component_score: Optional[int] = None
     risk_level: Optional[str] = None

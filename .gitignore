@@ -104,3 +104,4 @@ WARP.md
 *.example
 /venv2
 tst.txt
+/.claude
