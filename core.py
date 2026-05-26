@@ -1,12 +1,17 @@
 import asyncio
+import base64
 import io
 import json
 import logging
 import time
 
+from openai import AuthenticationError
 from PIL import Image
 
 from models import ComponentBatchResult, DefectResponse
+
+OPENROUTER_PRIMARY_MODEL = "google/gemini-2.5-flash"
+OPENROUTER_FALLBACK_MODEL = "openai/gpt-4o-mini"
 
 logger = logging.getLogger("defect_model")
 
@@ -233,21 +238,70 @@ def parse_gemini_response(response_text: str) -> DefectResponse:
 
 
 # ---------------------------------------------------------------------------
+# OpenRouter + Gemini fallback
+# ---------------------------------------------------------------------------
+
+async def _call_openrouter(client, model: str, prompt: str, image_bytes: bytes) -> str:
+    b64 = base64.b64encode(image_bytes).decode()
+    resp = await client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+        ]}],
+    )
+    return resp.choices[0].message.content
+
+
+async def call_vision_model(
+    openrouter_client, gemini_model,
+    prompt: str, image_bytes: bytes, component: str,
+) -> str:
+    # 1. Try primary model on OpenRouter
+    try:
+        t0 = time.monotonic()
+        text = await _call_openrouter(openrouter_client, OPENROUTER_PRIMARY_MODEL, prompt, image_bytes)
+        logger.info("OpenRouter response | model=%s component=%s duration=%.2fs",
+                    OPENROUTER_PRIMARY_MODEL, component, time.monotonic() - t0)
+        return text
+    except AuthenticationError:
+        logger.warning("OpenRouter auth failed — skipping to Gemini SDK")
+    except Exception as e:
+        logger.warning("Primary model %s failed: %s — trying OpenRouter fallback", OPENROUTER_PRIMARY_MODEL, e)
+        # 2. Try fallback model on OpenRouter
+        try:
+            t0 = time.monotonic()
+            text = await _call_openrouter(openrouter_client, OPENROUTER_FALLBACK_MODEL, prompt, image_bytes)
+            logger.info("OpenRouter response | model=%s component=%s duration=%.2fs",
+                        OPENROUTER_FALLBACK_MODEL, component, time.monotonic() - t0)
+            return text
+        except AuthenticationError:
+            logger.warning("OpenRouter auth failed on fallback — skipping to Gemini SDK")
+        except Exception as e2:
+            logger.warning("Fallback model %s failed: %s — using Gemini SDK", OPENROUTER_FALLBACK_MODEL, e2)
+
+    # 3. Last resort: direct Gemini SDK
+    logger.info("Using Gemini SDK fallback | component=%s", component)
+    pil_image = await asyncio.to_thread(_open_and_convert, image_bytes)
+    t0 = time.monotonic()
+    response = await gemini_model.generate_content_async([prompt, pil_image])
+    logger.info("Gemini SDK response | component=%s duration=%.2fs", component, time.monotonic() - t0)
+    return response.text
+
+
+# ---------------------------------------------------------------------------
 # Single-component inspection coroutine (used by batch endpoint)
 # ---------------------------------------------------------------------------
 
 async def inspect_one(
-    gemini_model,
+    openrouter_client, gemini_model,
     equipment_type: str, manufacturer: str, model: str,
     section: str, component: str, image_bytes: bytes,
 ) -> ComponentBatchResult:
     try:
-        pil_image = await asyncio.to_thread(_open_and_convert, image_bytes)
         prompt = create_inspection_prompt(equipment_type, manufacturer, model, section, component)
-        t0 = time.monotonic()
-        response = await gemini_model.generate_content_async([prompt, pil_image])
-        logger.info("Gemini response | component=%s duration=%.2fs", component, time.monotonic() - t0)
-        defect = parse_gemini_response(response.text)
+        response_text = await call_vision_model(openrouter_client, gemini_model, prompt, image_bytes, component)
+        defect = parse_gemini_response(response_text)
 
         if not defect.image_verified:
             logger.warning("Image mismatch | component=%s reason=%s", component, defect.verification_reason)

@@ -23,8 +23,12 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from openai import AsyncOpenAI
 
 from core import (
+    OPENROUTER_FALLBACK_MODEL,
+    OPENROUTER_PRIMARY_MODEL,
+    call_vision_model,
     create_inspection_prompt,
     inspect_one,
     parse_gemini_response,
@@ -61,6 +65,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY not found in environment variables")
 
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+if not OPENROUTER_API_KEY:
+    raise ValueError("OPENROUTER_API_KEY not found in environment variables")
+
 genai.configure(api_key=GEMINI_API_KEY)
 
 app = FastAPI(
@@ -78,6 +86,7 @@ app.add_middleware(
 )
 
 gemini_model = None
+openrouter_client = None
 
 # ---------------------------------------------------------------------------
 # Startup
@@ -85,16 +94,23 @@ gemini_model = None
 
 @app.on_event("startup")
 async def startup_event():
-    global gemini_model
+    global gemini_model, openrouter_client
     max_workers = 5
     loop = asyncio.get_event_loop()
     loop.set_default_executor(ThreadPoolExecutor(max_workers=max_workers))
     logger.info("Thread pool initialized with max_workers=%d", max_workers)
     try:
-        gemini_model = genai.GenerativeModel("gemini-3-flash-preview") #gemini-flash-latest  gemini-2.5-pro  gemini-2.5-flash
-        logger.info("Gemini model initialized successfully")
+        openrouter_client = AsyncOpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={"X-Title": "EquipmentGram Defect Model"},
+        )
+        logger.info("OpenRouter client initialized | primary=%s fallback=%s",
+                    OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL)
+        gemini_model = genai.GenerativeModel("gemini-2.5-flash")
+        logger.info("Gemini SDK fallback initialized")
     except Exception as e:
-        logger.critical("Failed to initialize Gemini model: %s", e)
+        logger.critical("Failed to initialize LLM clients: %s", e)
         raise
 
 # ---------------------------------------------------------------------------
@@ -132,7 +148,10 @@ async def health_check():
         }
     return {
         "status": "healthy",
-        "gemini_model": "gemini-3-flash-preview",
+        "llm_provider": "openrouter",
+        "primary_model": OPENROUTER_PRIMARY_MODEL,
+        "fallback_model": OPENROUTER_FALLBACK_MODEL,
+        "gemini_fallback": "gemini-2.5-flash",
         "equipment_types": len(EQUIPMENT_HIERARCHY),
         "total_sections": len(COMPACT_EXCAVATOR_SECTIONS),
         "timestamp": datetime.now().isoformat(),
@@ -264,8 +283,8 @@ async def batch_inspect_equipment(
         if not is_valid:
             logger.warning("Batch hierarchy validation warning (proceeding): %s", error_msg)
 
-    if gemini_model is None:
-        raise HTTPException(status_code=503, detail="Gemini model not initialized.")
+    if openrouter_client is None or gemini_model is None:
+        raise HTTPException(status_code=503, detail="LLM clients not initialized.")
 
     image_bytes_list = []
     for img in images:
@@ -277,7 +296,7 @@ async def batch_inspect_equipment(
         image_bytes_list.append(data)
 
     results = await asyncio.gather(*[
-        inspect_one(gemini_model, equipment_type, manufacturer, model, section, name, data)
+        inspect_one(openrouter_client, gemini_model, equipment_type, manufacturer, model, section, name, data)
         for name, data in zip(component_names_list, image_bytes_list)
     ])
 
@@ -340,21 +359,16 @@ async def inspect_equipment(
             logger.warning("Image too large: %.1fKB", image_size_kb)
             raise HTTPException(status_code=400, detail="Image size must be less than 10MB")
 
-        pil_image = await asyncio.to_thread(_open_and_convert, image_bytes)
-        logger.info("Image processed | mode=%s size=%s", pil_image.mode, pil_image.size)
-
         prompt = create_inspection_prompt(equipment_type, manufacturer, model, section, component)
 
-        if gemini_model is None:
-            logger.error("Gemini model is not initialized")
-            raise HTTPException(status_code=503, detail="Gemini model not initialized.")
+        if openrouter_client is None or gemini_model is None:
+            logger.error("LLM clients not initialized")
+            raise HTTPException(status_code=503, detail="LLM clients not initialized.")
 
-        logger.info("Sending request to Gemini | component=%s", component)
-        t0 = time.monotonic()
-        response = await gemini_model.generate_content_async([prompt, pil_image])
-        logger.info("Gemini response received | duration=%.2fs", time.monotonic() - t0)
+        logger.info("Sending request to vision model | component=%s", component)
+        response_text = await call_vision_model(openrouter_client, gemini_model, prompt, image_bytes, component)
 
-        defect_result = parse_gemini_response(response.text)
+        defect_result = parse_gemini_response(response_text)
 
         if not defect_result.image_verified:
             logger.warning(
